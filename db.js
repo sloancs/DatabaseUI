@@ -1,16 +1,23 @@
-const { ipcMain } = require('electron');
 const { Client } = require('pg');
+const dotenv = require('dotenv');
+const path = require('path');
 
-const client = new Client({
-    user: 'postgres',
-    host: 'localhost',
-    database: 'postgres',
-    password: '1234',
-    port: 5432
-})
+// Load environment variables from .env file
+dotenv.config({ path: './resources/config.env' });
 
-client.connect()
+
+
+// Initialize the PostgreSQL client with the config
+const dbClient = new Client({
+    user: process.env.DB_USER,
+    host: process.env.DB_HOST,
+    database: process.env.DB_NAME,
+    password: process.env.DB_PASSWORD,
+    port: parseInt(process.env.DB_PORT, 10),
+});
+
+dbClient.connect()
     .then(() => console.log('Successfully connected to the database'))
-    .catch(err => console.log('Error connecting to the database:', err));
+    .catch(err => console.error('Error connecting to the database:', err));
 
-module.exports = client;
+module.exports = dbClient;

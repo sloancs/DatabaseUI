@@ -2,17 +2,17 @@ let isMaximized = false;
 let isCollapsed = false;
 window.ipcRenderer.receive('maximized', (state) => {isMaximized = state});
 
-// Override window.confirm to use the custom dialog
+// Override confirm to use the custom dialog
 window.confirm = async function(message) {
   const isConfirmed = await ipcRenderer.invoke('show-confirmation-dialog', message);
-  return isConfirmed; // Return true if OK was pressed, false if Cancel
+  return isConfirmed; // true if yes, false if cancel
 };
 
 // Display success or error message on app
 function statusMessage(message, status) {
   const statusElement = document.getElementById('status-message');
   statusElement.textContent = message;
-  statusElement.style.color = status ? '#61fa8a' : '#fa6171';
+  statusElement.style.color = status ? '#61fa8a' : '#fa6171'; // green or red
   statusElement.style.marginLeft = '0.5em';
   statusElement.style.fontSize = '12px';
 }
@@ -31,10 +31,12 @@ function displayScreen(screenID) {
     }
 }
 
+// Refresh table values for updates/inserts with the new data
 function refreshTable() {
-  document.getElementById('tables').dispatchEvent(new Event('change'));
+  document.querySelector('.screen.active #tables').dispatchEvent(new Event('change'));
 }
 
+// Convert input text entries to correct data-type
 function convertType(input) {
   let value = !input.value ? null : input.value;
   const columnType = input.dataset.type;
@@ -94,6 +96,7 @@ function updateRow(row, tableName) {
     });
 }
 
+// Insert row into table based on inputs
 function insertRow(tableName) {
   const formData = {};
   document.querySelectorAll('#form-fields input').forEach(input => {
@@ -121,12 +124,14 @@ function insertRow(tableName) {
     });
 }
 
+// Clear html for use with screen navigation
 function clearPage() {
   const tableBody = document.querySelector('.screen.active #rows-table tbody');
   const tableHeaders = document.querySelector('.screen.active #rows-table thead tr');
   tableBody.innerHTML = ''; 
   tableHeaders.innerHTML = '';
 
+  // Hide elements unique to CRUD operations screen
   const activeScreen = document.querySelector('.screen.active');
   if(activeScreen.id === 'crud-screen') {
     const formFields = document.querySelector('.screen.active #form-fields');
@@ -162,6 +167,7 @@ function displayRows(rows, tableName) {
 
   const activeScreen = document.querySelector('.screen.active');
 
+  // Buttons unique to CRUD screen
   if (activeScreen.id === 'crud-screen') {
     const th = document.createElement('th');
     th.textContent = 'actions';
@@ -171,7 +177,7 @@ function displayRows(rows, tableName) {
     document.getElementById('insert-button').style.display = 'inline-block';
   }
 
-  // Add row data
+  // Add data from selected table from database to rows of table on screen
   rows.forEach((row) => {
     const tr = document.createElement('tr');
     Object.values(row).forEach(value => {
@@ -180,7 +186,7 @@ function displayRows(rows, tableName) {
       tr.appendChild(td);
     });
 
-    // Add buttons for editing and deleting
+    // Add buttons for editing and deleting on CRUD screen
     if (activeScreen.id === 'crud-screen') {
       editButton = document.createElement('button');
       editButton.textContent = 'Edit';
@@ -207,11 +213,11 @@ function displayRows(rows, tableName) {
 
 // Delete row in table
 function deleteRow(row, tableName) {
+  // Fetch primary key to query which row to delete
   window.ipcRenderer.invoke('get-primary-key', tableName)
     .then(primaryKey => {
       if(primaryKey) {
         const condition = `${primaryKey} = ${row[primaryKey]}`;
-        console.log(condition);
 
         window.confirm('Are you sure you want to delete this row?')
           .then(isConfirmed => {
@@ -220,8 +226,9 @@ function deleteRow(row, tableName) {
                 .then(response => {
                   if (response.success) {
                     statusMessage('Successfully deleted row.', true);
-                    document.getElementById('tables').dispatchEvent(new Event('change'));
-                  } else {
+                    refreshTable();
+                  } 
+                  else {
                     console.error('Error deleting row:', response.error);
                   }
                 })
@@ -277,11 +284,9 @@ function fillFormFields(row) {
       }
     })
   });
-
-  
 }
 
-// Update form submission listener
+// Listener for when form-fields are clicked for update/insert
 const form = document.getElementById('update-form');
 form.onsubmit = (event) => {
   event.preventDefault();
@@ -329,7 +334,7 @@ form.onsubmit = (event) => {
   }
 }
 
-// Resize event, change transition to none
+// Resize event listener, changes transition to none
 let resizeTimer; // debounce
 window.addEventListener('resize', () => {
   const ele = document.querySelector('.main-content-container');
@@ -445,7 +450,7 @@ document.querySelectorAll('#tables').forEach(dropdown => {
   });
 })
 
-// Handle table selection and display rows
+// Handle view selection and display rows
 document.getElementById('views').addEventListener('change', (event) => {
   const selectedTable = event.target.value;
   if (selectedTable) {

@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('node:path')
-const client = require('./db');
+const db = require('./db');
 
 let window;
 
@@ -33,9 +33,10 @@ app.whenReady().then(() => {
     }
   })
 })
+app.disableHardwareAcceleration();
 
 
-// Title bar
+// Title bar IPC handlers
 ipcMain.on('minimize', (event) => {
   window.minimize();
 })
@@ -51,10 +52,29 @@ ipcMain.on('unmaximize', (event) => {
 })
 
 ipcMain.on('close', (event) => {
-  window.close();
+  event.preventDefault();
+  // Hide window instead of close on macOS since applications
+  // stay active until user explicitly quits
+  if (process.platform !== 'darwin') {
+    window.close();
+  }
+  else {
+    window.hide();
+  }
 })
 
-// Custom confirmation popup since alert() and confirm() break focus
+// Mainly for macOS
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow('index.html');
+  } 
+  else {
+    window.show();
+  }
+});
+
+// Custom confirmation popup since confirm() breaks focus
+// and make inputs non-editable
 ipcMain.handle('show-confirmation-dialog', async (event, message) => {
   const response = await dialog.showMessageBox({
     type: 'warning',
@@ -65,14 +85,14 @@ ipcMain.handle('show-confirmation-dialog', async (event, message) => {
     message: '',
   });
 
-  return response.response === 0; // return true if Yes, false if Cancel
+  return response.response === 0; // true if yes, false if cancel
 });
 
 // Database
 // Fetch all base tables from the database
 ipcMain.handle('get-tables', async () => {
   try {
-    const res = await client.query(`
+    const res = await db.query(`
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'; 
@@ -89,7 +109,7 @@ ipcMain.handle('get-tables', async () => {
 // Fetch all views from the database
 ipcMain.handle('get-views', async () => {
   try {
-    const res = await client.query(`
+    const res = await db.query(`
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public' AND table_type = 'VIEW'; 
@@ -103,10 +123,10 @@ ipcMain.handle('get-views', async () => {
   }
 });
 
-// Fetch columns for a specific table
+// Fetch all columns for a specific table
 ipcMain.handle('get-columns', async (event, tableName) => {
   try {
-    const res = await client.query(`
+    const res = await db.query(`
     SELECT column_name, data_type
     FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = $1;
@@ -120,10 +140,10 @@ ipcMain.handle('get-columns', async (event, tableName) => {
   }
 });
 
-// Fetch rows for a specific table
+// Fetch all rows for a specific table
 ipcMain.handle('get-rows', async (event, tableName) => {
   try {
-    const res = await client.query(`SELECT * FROM ${tableName}`);
+    const res = await db.query(`SELECT * FROM ${tableName}`);
     return res.rows;
   } 
   
@@ -133,9 +153,13 @@ ipcMain.handle('get-rows', async (event, tableName) => {
   }
 });
 
+// Fetch first row with PK matching input
 ipcMain.handle('get-row-from-pk', async (event, tableName, input, columnPK) => {
   try {
-    const res = await client.query(`SELECT * FROM ${tableName} WHERE ${columnPK} = $1;`, [input]);
+    if(!input || !columnPK) {
+      throw new Error('Invalid data received');
+    }
+    const res = await db.query(`SELECT * FROM ${tableName} WHERE ${columnPK} = $1;`, [input]);
     return res.rows.length > 0 ? res.rows[0] : null;
   }
   catch (err) {
@@ -143,11 +167,12 @@ ipcMain.handle('get-row-from-pk', async (event, tableName, input, columnPK) => {
     return [];
   }
 });
+
 // Update a row in the table
 ipcMain.handle('update-row', async (event, tableName, updatedData, condition) => {
   try {
     if (!updatedData || !condition) {
-      throw new Error('Invalid data received');
+      throw new Error('Invalid input data');
     }
 
     let i = 1;
@@ -163,7 +188,7 @@ ipcMain.handle('update-row', async (event, tableName, updatedData, condition) =>
       WHERE ${condition}
     `;
 
-    await client.query(query, values);
+    await db.query(query, values);
     return { success: true };
   } 
   
@@ -177,20 +202,21 @@ ipcMain.handle('update-row', async (event, tableName, updatedData, condition) =>
 //Insert a row in the table
 ipcMain.handle('insert-row', async (event, tableName, values, columnNames) => {
   try {
-    // Validate values and tableName to prevent SQL injection
     if (!Array.isArray(values) || typeof tableName !== 'string' || !Array.isArray(columnNames)) {
       throw new Error('Invalid input data.');
     }
 
-    // Prepare the INSERT query with placeholders for values
     const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
-    const query = `INSERT INTO ${tableName} (${columnNames.join(', ')}) VALUES (${placeholders})`;
+    const query = `
+      INSERT INTO ${tableName} (${columnNames.join(', ')}) 
+      VALUES (${placeholders})
+      `;
 
-    // Execute the query using parameterized values
-    await client.query(query, values);
+    await db.query(query, values);
 
     return { success: true };
-  } catch (err) {
+  } 
+  catch (err) {
     console.error(`Error inserting row into ${tableName}:`, err);
     window.webContents.send('display-status', `Error inserting row into ${tableName}: ${err.message}`, false);
     return { success: false, error: err.message };
@@ -205,7 +231,7 @@ ipcMain.handle('delete-row', async (event, tableName, condition) => {
     }
 
     const query = `DELETE FROM ${tableName} WHERE ${condition}`;
-    await client.query(query);
+    await db.query(query);
     return {success : true};
   }
   catch (err) {
@@ -215,10 +241,10 @@ ipcMain.handle('delete-row', async (event, tableName, condition) => {
   }
 });
 
-// Get primary key for a specific table
+// Fetch column name of primary key for a specific table
 ipcMain.handle('get-primary-key', async (event, tableName) => {
   try {
-    const res = await client.query(`
+    const res = await db.query(`
       SELECT column_name
       FROM information_schema.key_column_usage
       WHERE table_name = $1
@@ -231,10 +257,10 @@ ipcMain.handle('get-primary-key', async (event, tableName) => {
     `, [tableName]);
 
     if (res.rows.length > 0) {
-      return res.rows[0].column_name; // Return the primary key column name
+      return res.rows[0].column_name;
     } 
     else {
-      return null; // No primary key found for the table
+      return null;
     }
   } 
   catch (err) {
